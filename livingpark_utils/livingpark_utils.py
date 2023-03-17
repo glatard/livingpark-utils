@@ -621,12 +621,13 @@ class LivingParkUtils:
             ]
             for mat_file in mat_files:
                 assert os.path.exists(mat_file), f"{mat_file} doesn't exist"
+                print(f'Copying {mat_file} as {mat_file+".bak"}')
                 copyfile(mat_file, mat_file + ".bak")
 
         return output
 
     def spm_compute_dartel_normalization(
-        self, cohort: pd.DataFrame
+        self, cohort: pd.DataFrame, fwhm="4 4 4"
     ) -> boutiques.ExecutorOutput:
         """Run DARTEL and normalization segmentation batch for subjects in cohort.
 
@@ -637,6 +638,8 @@ class LivingParkUtils:
         ----------
          cohort: pd.DataFrame
             A LivingPark cohort. Must have columns PATNO and EVENT_ID
+         fwhm: str
+            Size of smoothing kernel used in normalization. Default: "4 4 4"
 
         Returns
         -------
@@ -706,7 +709,7 @@ class LivingParkUtils:
                 "[RC2_IMAGES]": os.linesep.join(rc2_files_quote),
                 "[C1_IMAGES]": os.linesep.join(c1_files_quote),
                 "[C2_IMAGES]": os.linesep.join(c2_files_quote),
-                "[NORM_FWHM]": "4 4 4",
+                "[NORM_FWHM]": fwhm,
             },
             dartel_norm_job_name,
         )
@@ -797,13 +800,62 @@ class LivingParkUtils:
 
         return icvs
 
+    def spm_vbm_stats_id(
+        self,
+        tissue_class: str,
+        cohort: pd.DataFrame,
+        group1_patnos: list,
+        group2_patnos: list,
+
+    ) -> str:
+        """
+        Return unique id associated with VBM stats design.
+
+         Parameters
+        ----------
+         cohort: pd.DataFrame
+            A LivingPark cohort. Must have columns PATNO and EVENT_ID
+         tissue_class: int
+            "gm" for grey matter, "wm" for white matter
+         group1/2_patnos: list of PPMI patient numbers in group1/2. Important: a patno
+            must appear in exactly one group and must appear excatly once in this group.
+        """
+        return f'{tissue_class}_{ppmi.cohort_id(cohort)}_{ppmi.cohort_id(group1_patnos.to_frame())}_{ppmi.cohort_id(group2_patnos.to_frame())}'
+
+
+    def spm_vbm_design_dir(
+        self,
+        tissue_class: str,
+        cohort: pd.DataFrame,
+        group1_patnos: list,
+        group2_patnos: list,
+
+    ) -> str:
+        """
+        Return unique directory to store VBM stats design.
+
+         Parameters
+        ----------
+         cohort: pd.DataFrame
+            A LivingPark cohort. Must have columns PATNO and EVENT_ID
+         tissue_class: int
+            "gm" for grey matter, "wm" for white matter
+         group1/2_patnos: list of PPMI patient numbers in group1/2. Important: a patno
+            must appear in exactly one group and must appear excatly once in this group.
+        """
+
+        return os.path.join("outputs", f"results-{self.spm_vbm_stats_id(tissue_class, cohort, group1_patnos, group2_patnos)}")
+
+
+
     def spm_compute_vbm_stats(
         self,
         cohort: pd.DataFrame,
-        tissue_class: int,
+        tissue_class: str,
         group1_patnos: list,
         group2_patnos: list,
         icvs: dict,
+        thresh: float=0.0005, # value used in Scherfler et al, 2011
     ) -> dict:
         """
         Compute VBM stats for cohort.
@@ -811,7 +863,8 @@ class LivingParkUtils:
         Cohort must already be segmented into GM and WM using
         self.spm_compute_missing_segmentations and normalized to common space using
         self.spm_compute_dartel_normalization. Inter-cranial volumes must be
-        pre-computed using self.spm_compute_intra_cranial_volumes.
+        pre-computed using self.spm_compute_intra_cranial_volumes. Batch includes two contrasts:
+        group 1 vs group 2 and group 2 vs group 1.
 
         Parameters
         ----------
@@ -821,9 +874,11 @@ class LivingParkUtils:
             "gm" for grey matter, "wm" for white matter
          group1/2_patnos: list of PPMI patient numbers in group1/2. Important: a patno
             must appear in exactly one group and must appear excatly once in this group.
-        icys: dict
+        icvs: dict
             inter-cranial volumes by patno, as returned by
             self.spm_compute_intra_cranial_volumes
+        thresh: float
+            p-value significance threshold
         """
         # Stats batch (grey matter)
         stats_job_template = os.path.join(
@@ -834,11 +889,13 @@ class LivingParkUtils:
 
         cohort_id = ppmi.cohort_id(cohort)
 
+        stats_job_id = self.spm_vbm_stats_id(tissue_class, cohort, group1_patnos, group2_patnos)
+        
         stats_job_name = os.path.abspath(
-            os.path.join("code", "batches", f"stats_{tissue_class}_{cohort_id}_job.m")
+            os.path.join("code", "batches", f"stats_{stats_job_id}_job.m")
         )
 
-        design_dir = os.path.join("outputs", f"results-{tissue_class}-{cohort_id}")
+        design_dir = self.spm_vbm_design_dir(tissue_class=tissue_class, cohort=cohort, group1_patnos=group1_patnos, group2_patnos=group2_patnos) 
         os.makedirs(design_dir, exist_ok=True)
 
         # Don't mess up with ordering, it's critical
@@ -871,6 +928,7 @@ class LivingParkUtils:
                     for x in groups_patnos
                 ]
             ),
+            "[THRESHOLD]": str(thresh),
         }
 
         # Stats batch
@@ -1093,9 +1151,8 @@ class LivingParkUtils:
         cohort_id: string
             A string containing the unique id of the cohort.
         """
-        from livingpark_utils.dataset.ppmi import cohort_id
 
-        return cohort_id(cohort=cohort)
+        return ppmi.cohort_id(cohort=cohort)
 
     @deprecated(extra="Moved to module `livingpark_utils.pipeline.qc`.")
     def make_gif(self, frame_folder: str, output_name: str = "animation.gif") -> None:
