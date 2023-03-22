@@ -158,6 +158,7 @@ class LivingParkUtils:
         if len(missing) == 0:
             return print("Download skipped: No missing files!")
         else:
+            print(f"Downloading {len(missing)} missing file(s).")
             _, missing = default.get_T1_nifti_files(
                 missing, symlink=symlink, timeout=timeout, **kwargs
             )

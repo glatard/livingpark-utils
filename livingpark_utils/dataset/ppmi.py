@@ -121,7 +121,7 @@ def clean_protocol_description(desc: str) -> str:
     str
         Protocol description. Example: "MPRAGE GRAPPA"
     """
-    return re.sub(r"_+", "_", re.sub(r"[\s()/-]", "_", desc)).strip("_")
+    return re.sub(r"_+", "_", re.sub(r"[\s()/]", "_", desc)).strip("_")
 
 
 def find_nifti_file_in_cache(
